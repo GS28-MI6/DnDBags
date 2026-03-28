@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth.routes');
 const campaignRoutes = require('./routes/campaign.routes');
@@ -16,10 +17,28 @@ app.use(cors({
 
 app.use(express.json());
 
-app.use('/api/auth', authRoutes);
-app.use('/api/campaigns', campaignRoutes);
-app.use('/api/campaigns', itemRoutes);
-app.use('/api', characterRoutes);
+// Strict rate limiter for auth endpoints (brute-force protection)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes, por favor intenta más tarde' },
+});
+
+// General limiter for all other API routes
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes, por favor intenta más tarde' },
+});
+
+app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/campaigns', apiLimiter, campaignRoutes);
+app.use('/api/campaigns', apiLimiter, itemRoutes);
+app.use('/api', apiLimiter, characterRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
