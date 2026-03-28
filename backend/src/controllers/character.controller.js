@@ -203,37 +203,46 @@ const getItems = async (req, res) => {
       [charId]
     );
 
-    // Enrich with item details
-    const enriched = [];
-    for (const item of items) {
-      let detail = null;
-      if (item.item_source === 'base') {
-        const [rows] = await pool.query(
-          `SELECT bi.*, it.name as item_type_name FROM base_items bi
-           JOIN item_types it ON bi.item_type_id = it.id
-           WHERE bi.id = ?`,
-          [item.item_id]
-        );
-        detail = rows[0] || null;
-      } else if (item.item_source === 'custom') {
-        const [rows] = await pool.query(
-          `SELECT cci.*, it.name as item_type_name FROM campaign_custom_items cci
-           JOIN item_types it ON cci.item_type_id = it.id
-           WHERE cci.id = ?`,
-          [item.item_id]
-        );
-        detail = rows[0] || null;
-      } else if (item.item_source === 'override') {
-        const [rows] = await pool.query(
-          `SELECT cio.*, it.name as item_type_name FROM campaign_item_overrides cio
-           JOIN item_types it ON cio.item_type_id = it.id
-           WHERE cio.id = ?`,
-          [item.item_id]
-        );
-        detail = rows[0] || null;
-      }
+    // Collect IDs per source to fetch all details in three batch queries
+    const baseIds = items.filter(i => i.item_source === 'base').map(i => i.item_id);
+    const customIds = items.filter(i => i.item_source === 'custom').map(i => i.item_id);
+    const overrideIds = items.filter(i => i.item_source === 'override').map(i => i.item_id);
 
-      enriched.push({
+    const detailMap = new Map();
+
+    if (baseIds.length > 0) {
+      const [rows] = await pool.query(
+        `SELECT bi.*, it.name as item_type_name FROM base_items bi
+         JOIN item_types it ON bi.item_type_id = it.id
+         WHERE bi.id IN (?)`,
+        [baseIds]
+      );
+      for (const r of rows) detailMap.set(`base:${r.id}`, r);
+    }
+
+    if (customIds.length > 0) {
+      const [rows] = await pool.query(
+        `SELECT cci.*, it.name as item_type_name FROM campaign_custom_items cci
+         JOIN item_types it ON cci.item_type_id = it.id
+         WHERE cci.id IN (?)`,
+        [customIds]
+      );
+      for (const r of rows) detailMap.set(`custom:${r.id}`, r);
+    }
+
+    if (overrideIds.length > 0) {
+      const [rows] = await pool.query(
+        `SELECT cio.*, it.name as item_type_name FROM campaign_item_overrides cio
+         JOIN item_types it ON cio.item_type_id = it.id
+         WHERE cio.id IN (?)`,
+        [overrideIds]
+      );
+      for (const r of rows) detailMap.set(`override:${r.id}`, r);
+    }
+
+    const enriched = items.map(item => {
+      const detail = detailMap.get(`${item.item_source}:${item.item_id}`) || null;
+      return {
         id: item.id,
         characterId: item.character_id,
         itemSource: item.item_source,
@@ -243,8 +252,8 @@ const getItems = async (req, res) => {
         weight: detail ? parseFloat(detail.weight) : 0,
         description: detail ? detail.description : '',
         itemType: detail ? detail.item_type_name : '',
-      });
-    }
+      };
+    });
 
     return res.json({ items: enriched });
   } catch (err) {
